@@ -1,0 +1,13 @@
+[build]
+  # The command to build your project (Vite default)
+  command = "npm run build"
+  # The directory where Vite outputs the build files
+  publish = "dist"
+
+# This is crucial for React apps (Single Page Applications)
+# It ensures that if a user refreshes the page, they don't get a 404 error,
+# but are instead redirected back to your app so React can handle the view.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
