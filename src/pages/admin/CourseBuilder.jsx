@@ -268,7 +268,9 @@ const CourseBuilder = ({ userId, setView, existingCourseId, folders = [] }) => {
     }, [existingCourseId]);
 
     const updateModule = (mid, k, v) => setCourse(p => ({...p, modules: p.modules.map(m => m.id === mid ? {...m, [k]: v} : m)}));
-    const addModule = () => setCourse(p => ({...p, modules: [...p.modules, {id: `mod_${Date.now()}`, title: 'New Module', type: 'text', content: '', questions: []}]}));
+    
+    // UPDATED: title defaults to empty string '' so placeholder shows
+    const addModule = () => setCourse(p => ({...p, modules: [...p.modules, {id: `mod_${Date.now()}`, title: '', type: 'text', content: '', questions: []}]}));
     
     // Helper to add a page break quickly
     const addPageBreak = () => setCourse(p => ({...p, modules: [...p.modules, {id: `mod_${Date.now()}`, title: 'Page Break', type: 'break'}]}));
