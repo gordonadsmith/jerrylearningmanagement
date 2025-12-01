@@ -9,7 +9,7 @@ import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import CoursePlayer from './pages/student/CoursePlayer';
 import UserCallReviews from './pages/student/UserCallReviews';
-import AgentDashboard from './pages/student/AgentDashboard'; // Renamed from StudentDashboard
+import AgentDashboard from './pages/student/AgentDashboard';
 
 // Admin Components
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -27,6 +27,7 @@ const App = () => {
     
     // Data Lists
     const [courses, setCourses] = useState([]);
+    const [folders, setFolders] = useState([]); 
     const [users, setUsers] = useState([]);
     const [allResponses, setAllResponses] = useState([]);
     const [myResponses, setMyResponses] = useState([]);
@@ -50,7 +51,7 @@ const App = () => {
                 const ref = doc(db, getPublicPath('users'), u.uid);
                 
                 try {
-                    // 1. Check if account is disabled
+                    // Check if account is disabled
                     const snap = await getDocs(query(collection(db, getPublicPath('users')), where('email', '==', u.email)));
                     if(!snap.empty && snap.docs[0].data().disabled) { 
                         alert("Account disabled."); 
@@ -58,7 +59,7 @@ const App = () => {
                         return; 
                     }
 
-                    // 2. Handle Invites (Convert invite to real user)
+                    // Handle Invites
                     const q = query(collection(db, getPublicPath('users')), where('email', '==', u.email));
                     const inviteSnap = await getDocs(q);
                     
@@ -72,15 +73,14 @@ const App = () => {
                     console.error("Auth check processed", e); 
                 }
 
-                // 3. Listen to User Profile
+                // Listen to User Profile
                 onSnapshot(ref, async (s) => {
                     if (s.exists()) {
                         const pData = s.data();
                         setProfile(pData);
-                        // Redirect on first login
                         if (view === 'login') setView(pData.role === 'admin' ? 'dashboard' : 'myCourses');
                         
-                        // Listen to Call Reviews (Specific to this user)
+                        // Listen to Call Reviews
                         onSnapshot(collection(db, getUserPath(u.uid, 'call_reviews')), (revSnap) => {
                             setMyReviews(revSnap.docs.map(d => ({id: d.id, ...d.data()})));
                         });
@@ -105,41 +105,42 @@ const App = () => {
         });
     }, []); 
 
-    // --- DATA FETCHING (Courses, Users, Progress) ---
+    // --- DATA FETCHING ---
     useEffect(() => {
         if (!profile) return;
         
         // 1. Fetch Courses
         const unsubC = onSnapshot(collection(db, getPublicPath('courses')), s => setCourses(s.docs.map(d => ({id: d.id, ...d.data()}))));
         
-        // 2. Fetch Progress (Responses)
+        // 2. Fetch Folders
+        const unsubF = onSnapshot(collection(db, getPublicPath('folders')), s => setFolders(s.docs.map(d => ({id: d.id, ...d.data()}))));
+
+        // 3. Fetch Progress (Responses)
         let unsubResp;
         if (profile.role === 'admin') {
-            // Admin sees ALL responses
             unsubResp = onSnapshot(collection(db, getPublicPath('responses')), s => {
-                const data = s.docs.map(d => d.data());
+                // FIXED: Include ID so we can delete responses later
+                const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
                 setAllResponses(data);
-                setMyResponses(data.filter(r => r.userId === profile.uid)); // reuse logic
+                setMyResponses(data.filter(r => r.userId === profile.uid)); 
             });
         } else {
-            // Employee sees ONLY their responses
             const q = query(collection(db, getPublicPath('responses')), where('userId', '==', profile.uid));
-            unsubResp = onSnapshot(q, s => setMyResponses(s.docs.map(d => d.data())));
+            unsubResp = onSnapshot(q, s => setMyResponses(s.docs.map(d => ({ id: d.id, ...d.data() }))));
         }
 
-        // 3. Fetch Users (Admin Only)
+        // 4. Fetch Users (Admin Only)
         let unsubU = () => {};
         if (profile.role === 'admin') {
             unsubU = onSnapshot(collection(db, getPublicPath('users')), s => setUsers(s.docs.map(d => ({uid: d.id, ...d.data()}))));
         }
 
-        return () => { unsubC(); unsubU(); unsubResp && unsubResp(); };
+        return () => { unsubC(); unsubF(); unsubU(); unsubResp && unsubResp(); };
     }, [profile]);
 
     // --- VIEW ROUTING ---
 
     if (view === 'login') return <Login setView={setView} />;
-
     if (!profile) return <div className="flex h-screen items-center justify-center font-bold text-indigo-600">Loading Profile...</div>;
 
     return (
@@ -180,6 +181,7 @@ const App = () => {
                 {view === 'manageCourses' && (
                     <CourseManager 
                         courses={courses} 
+                        folders={folders} 
                         users={users} 
                         setView={setView} 
                         setCurrentCourseId={setCurrentCourseId} 
@@ -189,6 +191,7 @@ const App = () => {
                 {(view === 'createCourse' || view === 'courseBuilder') && (
                     <CourseBuilder 
                         userId={user.uid} 
+                        folders={folders} 
                         setView={setView} 
                         existingCourseId={currentCourseId} 
                     />
@@ -201,7 +204,6 @@ const App = () => {
                 
                 {/* --- AGENT/STUDENT VIEWS --- */}
 
-                {/* Agent Dashboard (Home) */}
                 {view === 'dashboard' && profile.role !== 'admin' && (
                     <AgentDashboard 
                         user={profile}
@@ -217,13 +219,11 @@ const App = () => {
                     <UserCallReviews reviews={myReviews} />
                 )}
                 
-                {/* My Courses List */}
                 {view === 'myCourses' && (
                     <div className="p-8">
                         <h1 className="text-3xl font-bold mb-6">My Courses</h1>
                         <div className="grid gap-4 md:grid-cols-3">
                             {courses.filter(c => profile.assignedCourses?.includes(c.id)).map(c => {
-                                // Calculate Progress
                                 const completedCount = myResponses.filter(r => r.courseId === c.id).length;
                                 const totalCount = c.modules ? c.modules.length : 0;
                                 const pct = totalCount === 0 ? 0 : Math.round((completedCount/totalCount)*100);

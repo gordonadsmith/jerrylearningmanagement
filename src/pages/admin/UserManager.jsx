@@ -1,12 +1,27 @@
 import React, { useState } from 'react';
-import { setDoc, doc, updateDoc } from 'firebase/firestore';
+import { setDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getPublicPath } from '../../utils';
 
 const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
     const [newUserEmail, setNewUserEmail] = useState('');
     const [newUserName, setNewUserName] = useState('');
+    const [newUserTeam, setNewUserTeam] = useState('sales'); 
     const [isAdding, setIsAdding] = useState(false);
+    
+    // Bulk Assignment State
+    const [showBulkAssign, setShowBulkAssign] = useState(false);
+    const [bulkCourseId, setBulkCourseId] = useState('');
+    const [bulkTeamTarget, setBulkTeamTarget] = useState('sales');
+
+    // --- DYNAMIC TEAMS LOGIC ---
+    // 1. Start with default teams
+    // 2. Add any unique team names found in the existing user list
+    const availableTeams = Array.from(new Set([
+        'sales', 
+        'service', 
+        ...users.map(u => u.team).filter(t => t) // Get existing teams from users
+    ])).sort();
 
     const handleAddUser = async (e) => {
         e.preventDefault();
@@ -17,6 +32,7 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                 email: newUserEmail.toLowerCase(),
                 name: newUserName,
                 role: 'employee',
+                team: newUserTeam, 
                 assignedCourses: [],
                 createdAt: new Date().toISOString(),
                 isInvite: true
@@ -48,79 +64,223 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
         }
     };
 
+    const handleTeamChange = async (userId, value) => {
+        let teamToSet = value;
+        
+        if (value === 'CREATE_NEW') {
+            const customName = prompt("Enter the name of the new team:");
+            if (customName && customName.trim().length > 0) {
+                teamToSet = customName.trim().toLowerCase();
+            } else {
+                return; // Cancelled
+            }
+        }
+
+        try {
+            await updateDoc(doc(db, getPublicPath('users'), userId), { team: teamToSet });
+        } catch (e) {
+            alert("Error updating team: " + e.message);
+        }
+    };
+
+    const handleNewUserTeamChange = (value) => {
+        if (value === 'CREATE_NEW') {
+            const customName = prompt("Enter the name of the new team:");
+            if (customName && customName.trim().length > 0) {
+                setNewUserTeam(customName.trim().toLowerCase());
+            }
+        } else {
+            setNewUserTeam(value);
+        }
+    };
+
     const removeCourse = async (userId, courseId, currentList = []) => {
         if(!window.confirm("Remove this course assignment?")) return;
         const newList = currentList.filter(id => id !== courseId);
         await updateDoc(doc(db, getPublicPath('users'), userId), { assignedCourses: newList });
     };
 
-    // Helper to check if a user has finished a specific course
     const isCourseComplete = (userId, course) => {
         if (!course.modules || course.modules.length === 0) return false;
         const lastModId = course.modules[course.modules.length - 1].id;
         return responses.some(r => r.userId === userId && r.courseId === course.id && r.moduleId === lastModId);
     };
 
+    // --- BULK ASSIGNMENT LOGIC ---
+    const handleBulkAssign = async () => {
+        if (!bulkCourseId) return alert("Please select a course.");
+        
+        const targetCourse = courses.find(c => c.id === bulkCourseId);
+        if (!window.confirm(`Assign '${targetCourse.title}' to all ${bulkTeamTarget.toUpperCase()} team members?`)) return;
+
+        // Filter users who are in the target team and NOT disabled
+        const targetUsers = users.filter(u => (u.team === bulkTeamTarget) && !u.disabled);
+        
+        try {
+            const promises = targetUsers.map(u => {
+                const userRef = doc(db, getPublicPath('users'), u.uid);
+                return updateDoc(userRef, { assignedCourses: arrayUnion(bulkCourseId) });
+            });
+            await Promise.all(promises);
+            alert(`Successfully assigned to ${targetUsers.length} users.`);
+            setShowBulkAssign(false);
+            setBulkCourseId('');
+        } catch (e) {
+            alert("Error assigning to team: " + e.message);
+        }
+    };
+
     return (
-        <div className="p-8">
+        <div className="p-8 bg-slate-50 min-h-full">
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold">Manage Users</h1>
-                <button 
-                    onClick={() => setIsAdding(!isAdding)} 
-                    className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700"
-                >
-                    {isAdding ? 'Cancel' : '+ Pre-Register User'}
-                </button>
+                <h1 className="text-3xl font-extrabold text-slate-900">Manage Users</h1>
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setShowBulkAssign(true)} 
+                        className="bg-white text-rose-600 border border-rose-200 px-4 py-2 rounded-lg shadow-sm hover:bg-rose-50 font-bold transition-all"
+                    >
+                        Bulk Assign Course
+                    </button>
+                    <button 
+                        onClick={() => setIsAdding(!isAdding)} 
+                        className="bg-emerald-600 text-white px-6 py-2 rounded-lg shadow-lg hover:bg-emerald-700 font-bold transition-colors"
+                    >
+                        {isAdding ? 'Cancel' : '+ Pre-Register User'}
+                    </button>
+                </div>
             </div>
+            
+            {/* BULK ASSIGN MODAL */}
+            {showBulkAssign && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-lg border border-slate-100">
+                        <h2 className="text-xl font-bold text-slate-900 mb-4">Bulk Assign Course</h2>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Select Course</label>
+                                <select 
+                                    className="w-full border border-slate-300 p-3 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                                    value={bulkCourseId}
+                                    onChange={e => setBulkCourseId(e.target.value)}
+                                >
+                                    <option value="">-- Choose a Course --</option>
+                                    {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Select Team</label>
+                                <select 
+                                    className="w-full border border-slate-300 p-3 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                                    value={bulkTeamTarget}
+                                    onChange={e => setBulkTeamTarget(e.target.value)}
+                                >
+                                    {availableTeams.map(team => (
+                                        <option key={team} value={team}>{team.charAt(0).toUpperCase() + team.slice(1)} Team</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button onClick={() => setShowBulkAssign(false)} className="px-4 py-2 text-slate-500 font-bold hover:text-slate-800">Cancel</button>
+                            <button onClick={handleBulkAssign} className="bg-rose-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-rose-700 shadow-lg">Assign to Team</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ADD USER FORM */}
             {isAdding && (
-                <form onSubmit={handleAddUser} className="bg-gray-100 p-4 rounded-lg mb-6 border border-gray-300 flex gap-4">
-                    <input className="border p-2 rounded flex-1" placeholder="Email" type="email" value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} required />
-                    <input className="border p-2 rounded flex-1" placeholder="Full Name" value={newUserName} onChange={e => setNewUserName(e.target.value)} required />
-                    <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded">Save</button>
+                <form onSubmit={handleAddUser} className="bg-white p-6 rounded-xl mb-6 border border-slate-200 shadow-sm flex gap-4 items-center">
+                    <input className="border border-slate-300 p-3 rounded-lg flex-1 focus:ring-2 focus:ring-rose-500 focus:outline-none" placeholder="Email" type="email" value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} required />
+                    <input className="border border-slate-300 p-3 rounded-lg flex-1 focus:ring-2 focus:ring-rose-500 focus:outline-none" placeholder="Full Name" value={newUserName} onChange={e => setNewUserName(e.target.value)} required />
+                    
+                    {/* DYNAMIC TEAM SELECTOR */}
+                    <select 
+                        className="border border-slate-300 p-3 rounded-lg w-40 focus:ring-2 focus:ring-rose-500 focus:outline-none bg-slate-50"
+                        value={newUserTeam}
+                        onChange={e => handleNewUserTeamChange(e.target.value)}
+                    >
+                        {availableTeams.map(team => (
+                            <option key={team} value={team}>{team.charAt(0).toUpperCase() + team.slice(1)}</option>
+                        ))}
+                        <option value="CREATE_NEW" className="font-bold text-rose-600">+ Add New Team</option>
+                    </select>
+
+                    <button type="submit" className="bg-rose-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-rose-700">Save</button>
                 </form>
             )}
-            <div className="bg-white shadow rounded-lg overflow-hidden">
-                <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+
+            {/* USER LIST TABLE */}
+            <div className="bg-white shadow-sm border border-slate-200 rounded-xl overflow-hidden">
+                <table className="min-w-full divide-y divide-slate-100">
+                    <thead className="bg-slate-50">
                         <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Active Pending Courses</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Employee</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Team</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Role</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Active Pending Courses</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200">
+                    <tbody className="divide-y divide-slate-100">
                         {users.map(user => (
-                            <tr key={user.uid} className={user.disabled ? 'bg-gray-100 opacity-60' : ''}>
+                            <tr key={user.uid} className={`hover:bg-slate-50 transition-colors ${user.disabled ? 'opacity-60 bg-slate-50' : ''}`}>
+                                {/* NAME & EMAIL */}
                                 <td className="px-6 py-4">
                                     <div 
                                         onClick={() => onSelectUser(user)} 
-                                        className="font-bold text-indigo-700 cursor-pointer hover:underline"
+                                        className="font-bold text-rose-600 cursor-pointer hover:text-rose-800 hover:underline"
                                     >
                                         {user.name}
                                     </div>
-                                    <div className="text-sm text-gray-500">{user.email}</div>
-                                    {user.isInvite && <span className="text-xs bg-yellow-100 text-yellow-800 px-1 rounded">Pending Signup</span>}
+                                    <div className="text-sm text-slate-500">{user.email}</div>
+                                    {user.isInvite && <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full mt-1 inline-block">Pending Signup</span>}
                                 </td>
+                                
+                                {/* DYNAMIC TEAM DROPDOWN */}
+                                <td className="px-6 py-4">
+                                    <select 
+                                        className={`text-xs font-bold uppercase border-none rounded px-2 py-1 cursor-pointer focus:ring-0 ${
+                                            user.team === 'service' ? 'bg-cyan-100 text-cyan-800' : 'bg-emerald-100 text-emerald-800'
+                                        }`}
+                                        value={user.team || 'sales'}
+                                        onChange={(e) => handleTeamChange(user.uid, e.target.value)}
+                                        disabled={user.disabled}
+                                    >
+                                        {availableTeams.map(team => (
+                                            <option key={team} value={team}>{team.toUpperCase()}</option>
+                                        ))}
+                                        <option value="CREATE_NEW">+ ADD NEW...</option>
+                                    </select>
+                                </td>
+
+                                {/* ROLE TOGGLE */}
                                 <td className="px-6 py-4">
                                     <button 
                                         onClick={() => toggleAdminRole(user)}
-                                        className={`px-2 py-1 text-xs rounded border font-bold transition-colors ${
+                                        className={`px-3 py-1 text-xs rounded-full border font-bold transition-all ${
                                             user.role === 'admin' 
-                                            ? 'bg-purple-100 text-purple-800 border-purple-200 hover:bg-purple-200' 
-                                            : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'
+                                            ? 'bg-slate-800 text-white border-slate-900 hover:bg-slate-700 shadow-sm' 
+                                            : 'bg-white text-slate-500 border-slate-200 hover:border-rose-300 hover:text-rose-600'
                                         }`}
-                                        title={user.role === 'admin' ? 'Click to demote to Employee' : 'Click to promote to Admin'}
+                                        title={user.role === 'admin' ? 'Click to demote' : 'Click to promote'}
                                     >
                                         {user.role === 'admin' ? 'Admin 🛡️' : 'Employee'}
                                     </button>
                                 </td>
+
+                                {/* STATUS */}
                                 <td className="px-6 py-4">
-                                    <span className={`px-2 py-1 text-xs rounded-full ${user.disabled ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                                    <span className={`px-2 py-1 text-xs rounded-full font-bold ${user.disabled ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'}`}>
                                         {user.disabled ? 'Disabled' : 'Active'}
                                     </span>
                                 </td>
+
+                                {/* ASSIGNED COURSES */}
                                 <td className="px-6 py-4">
                                     <div className="flex flex-wrap gap-2">
                                         {courses.map(c => {
@@ -132,12 +292,12 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                                             return (
                                                 <span 
                                                     key={c.id} 
-                                                    className="inline-flex items-center text-xs bg-orange-50 text-orange-800 border border-orange-200 px-2 py-1 rounded"
+                                                    className="inline-flex items-center text-xs bg-rose-50 text-rose-700 border border-rose-100 px-2 py-1 rounded-md"
                                                 >
                                                     {c.title}
                                                     <button 
                                                         onClick={() => removeCourse(user.uid, c.id, user.assignedCourses)}
-                                                        className="ml-2 text-red-500 hover:text-red-700 font-bold"
+                                                        className="ml-2 text-rose-400 hover:text-rose-700 font-bold"
                                                         title="Revoke Assignment"
                                                     >
                                                         &times;
@@ -146,12 +306,14 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                                             );
                                         })}
                                         {courses.every(c => !user.assignedCourses?.includes(c.id) || isCourseComplete(user.uid, c)) && (
-                                            <span className="text-xs text-gray-400 italic">No active pending courses</span>
+                                            <span className="text-xs text-slate-400 italic">No active pending courses</span>
                                         )}
                                     </div>
                                 </td>
+
+                                {/* ACTIONS (Disable User) */}
                                 <td className="px-6 py-4">
-                                    <button onClick={() => toggleUserStatus(user)} className={`text-sm font-medium ${user.disabled ? 'text-green-600' : 'text-red-600'} hover:underline`}>
+                                    <button onClick={() => toggleUserStatus(user)} className={`text-sm font-bold ${user.disabled ? 'text-emerald-600 hover:text-emerald-800' : 'text-slate-400 hover:text-red-600'}`}>
                                         {user.disabled ? 'Activate' : 'Disable'}
                                     </button>
                                 </td>
