@@ -3,11 +3,38 @@ import { deleteDoc, doc, updateDoc, arrayUnion, arrayRemove, addDoc, collection 
 import { db } from '../../firebase';
 import { getPublicPath } from '../../utils';
 
-const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourseId }) => {
+const CourseManager = ({ courses, folders = [], users, responses = [], setView, setCurrentCourseId }) => {
     const [assigningCourse, setAssigningCourse] = useState(null);
-    const [currentFolderId, setCurrentFolderId] = useState(null); // null = root view
+    const [viewingStats, setViewingStats] = useState(null); // New: Track which course stats to view
+    const [currentFolderId, setCurrentFolderId] = useState(null); 
     const [isCreatingFolder, setIsCreatingFolder] = useState(false);
     const [newFolderName, setNewFolderName] = useState('');
+    
+    // Bulk Assignment State
+    const [bulkTeamTargets, setBulkTeamTargets] = useState([]);
+
+    // --- DYNAMIC TEAMS LOGIC ---
+    const availableTeams = Array.from(new Set([
+        'sales', 
+        'service', 
+        ...users.map(u => u.team).filter(t => t)
+    ])).sort();
+
+    // --- HELPER: CHECK COMPLETION ---
+    const isCourseComplete = (userId, course) => {
+        if (!course.modules || course.modules.length === 0) return false;
+        const lastModId = course.modules[course.modules.length - 1].id;
+        return responses.some(r => r.userId === userId && r.courseId === course.id && r.moduleId === lastModId);
+    };
+
+    // --- HELPER: CALCULATE STATS ---
+    const getCourseStats = (course) => {
+        const assignedUsers = users.filter(u => u.assignedCourses?.includes(course.id) && !u.disabled);
+        const total = assignedUsers.length;
+        if (total === 0) return { total: 0, completed: 0, pct: 0 };
+        const completed = assignedUsers.filter(u => isCourseComplete(u.uid, course)).length;
+        return { total, completed, pct: Math.round((completed / total) * 100) };
+    };
 
     // --- FOLDER LOGIC ---
     const createFolder = async (e) => {
@@ -25,14 +52,10 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
 
     const deleteFolder = async (folderId) => {
         if (!window.confirm("Delete this folder? Courses inside will move to 'Uncategorized'.")) return;
-        
-        // 1. Move courses inside this folder back to root (null)
         const coursesInFolder = courses.filter(c => c.folderId === folderId);
         for (const c of coursesInFolder) {
             await updateDoc(doc(db, getPublicPath('courses'), c.id), { folderId: null });
         }
-        
-        // 2. Delete the folder document
         await deleteDoc(doc(db, getPublicPath('folders'), folderId));
     };
 
@@ -40,10 +63,9 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
         await updateDoc(doc(db, getPublicPath('courses'), courseId), { folderId });
     };
 
-    // Filter courses: Show only those in the current folder (or no folder if at root)
     const displayedCourses = courses.filter(c => {
         if (currentFolderId) return c.folderId === currentFolderId;
-        return !c.folderId; // Root view shows uncategorized courses
+        return !c.folderId; 
     });
 
     const currentFolder = folders.find(f => f.id === currentFolderId);
@@ -63,20 +85,24 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
         } catch (e) { alert("Error updating assignment: " + e.message); }
     };
 
-    const updateUserTeam = async (userId, newTeam) => {
-        try {
-            await updateDoc(doc(db, getPublicPath('users'), userId), { team: newTeam });
-        } catch (e) {
-            alert("Error updating team: " + e.message);
-        }
+    // --- BULK ASSIGNMENT LOGIC ---
+    const toggleBulkTeam = (team) => {
+        setBulkTeamTargets(prev => 
+            prev.includes(team) ? prev.filter(t => t !== team) : [...prev, team]
+        );
     };
 
-    // --- BULK ASSIGNMENT LOGIC ---
-    const assignToTeam = async (team) => {
-        if (!window.confirm(`Assign '${assigningCourse.title}' to all ${team.toUpperCase()} team members?`)) return;
+    const handleBulkAssign = async () => {
+        if (bulkTeamTargets.length === 0) return alert("Please select at least one team.");
         
-        // Filter users by team (defaulting 'sales' if team is undefined)
-        const targetUsers = users.filter(u => (u.team === team || (!u.team && team === 'sales')) && !u.disabled);
+        const teamNames = bulkTeamTargets.map(t => t.toUpperCase()).join(", ");
+
+        if (!window.confirm(`Assign '${assigningCourse.title}' to all members of: ${teamNames}?`)) return;
+
+        const targetUsers = users.filter(u => {
+            const userTeam = u.team || 'sales'; 
+            return bulkTeamTargets.includes(userTeam) && !u.disabled;
+        });
         
         try {
             const promises = targetUsers.map(u => {
@@ -84,7 +110,8 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
                 return updateDoc(userRef, { assignedCourses: arrayUnion(assigningCourse.id) });
             });
             await Promise.all(promises);
-            alert(`Successfully assigned to ${targetUsers.length} ${team} members.`);
+            alert(`Successfully assigned to ${targetUsers.length} users.`);
+            setBulkTeamTargets([]);
         } catch (e) {
             alert("Error assigning to team: " + e.message);
         }
@@ -107,7 +134,6 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
                 </div>
                 
                 <div className="flex gap-3">
-                    {/* Only show "New Folder" if we are at the root level */}
                     {!currentFolderId && (
                         <button 
                             onClick={() => setIsCreatingFolder(true)} 
@@ -125,7 +151,7 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
                 </div>
             </div>
 
-            {/* Folder Creation Input (Conditional) */}
+            {/* Folder Creation Input */}
             {isCreatingFolder && (
                 <form onSubmit={createFolder} className="mb-8 flex gap-2 bg-white p-4 rounded-xl shadow-sm border border-slate-200 w-full max-w-md animate-fade-in-down">
                     <input 
@@ -140,7 +166,7 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
                 </form>
             )}
 
-            {/* FOLDERS GRID (Only visible at Root) */}
+            {/* FOLDERS GRID */}
             {!currentFolderId && folders.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-8">
                     {folders.map(f => (
@@ -173,60 +199,123 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
                     </div>
                 )}
                 
-                {displayedCourses.map(c => (
-                    <div key={c.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center hover:shadow-md transition-shadow">
-                        <div>
-                            <h3 className="font-bold text-lg text-slate-900">{c.title}</h3>
-                            <p className="text-slate-500 text-sm font-medium">{c.modules?.length || 0} Modules</p>
-                        </div>
-                        
-                        <div className="flex gap-4 items-center">
-                            {/* Move to Folder Dropdown */}
-                            <select 
-                                className="text-xs border border-slate-300 rounded p-1.5 text-slate-600 bg-slate-50 max-w-[120px] focus:outline-none focus:border-rose-500"
-                                value={c.folderId || ''}
-                                onChange={(e) => moveCourseToFolder(c.id, e.target.value || null)}
-                                title="Move to Folder"
-                            >
-                                <option value="">(No Folder)</option>
-                                {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                            </select>
+                {displayedCourses.map(c => {
+                    const stats = getCourseStats(c);
+                    return (
+                        <div 
+                            key={c.id} 
+                            onClick={() => setViewingStats(c)} // Click to view stats
+                            className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center hover:shadow-md transition-shadow cursor-pointer"
+                        >
+                            <div className="flex-1">
+                                <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                                    {c.title}
+                                    {stats.total > 0 && (
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${stats.pct === 100 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                            {stats.pct}% Done
+                                        </span>
+                                    )}
+                                </h3>
+                                
+                                <div className="text-slate-500 text-sm font-medium mt-1 flex gap-4">
+                                    <span>{c.modules?.length || 0} Modules</span>
+                                    {stats.total > 0 && (
+                                        <span className="text-slate-400">
+                                            {stats.completed} of {stats.total} assigned agents completed
+                                        </span>
+                                    )}
+                                </div>
+                                {/* Mini Progress Bar */}
+                                {stats.total > 0 && (
+                                    <div className="w-48 h-1.5 bg-slate-100 rounded-full mt-2 overflow-hidden">
+                                        <div className="h-full bg-rose-500" style={{width: `${stats.pct}%`}}></div>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            <div className="flex gap-4 items-center" onClick={(e) => e.stopPropagation()}>
+                                <select 
+                                    className="text-xs border border-slate-300 rounded p-1.5 text-slate-600 bg-slate-50 max-w-[120px] focus:outline-none focus:border-rose-500"
+                                    value={c.folderId || ''}
+                                    onChange={(e) => moveCourseToFolder(c.id, e.target.value || null)}
+                                    title="Move to Folder"
+                                >
+                                    <option value="">(No Folder)</option>
+                                    {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                                </select>
 
-                            <div className="h-6 w-px bg-slate-200"></div>
+                                <div className="h-6 w-px bg-slate-200"></div>
 
-                            <button 
-                                onClick={() => setAssigningCourse(c)} 
-                                className="text-emerald-600 hover:text-emerald-700 font-bold text-sm bg-emerald-50 px-3 py-1.5 rounded border border-emerald-100 hover:border-emerald-200 transition-colors"
-                            >
-                                Assign 👥
-                            </button>
-                            
-                            <button 
-                                onClick={() => { setCurrentCourseId(c.id); setView('course'); }} 
-                                className="text-slate-500 hover:text-rose-600 font-bold text-sm transition-colors"
-                            >
-                                Preview
-                            </button>
-                            
-                            <button 
-                                onClick={() => { setCurrentCourseId(c.id); setView('courseBuilder'); }} 
-                                className="text-rose-600 hover:text-rose-800 font-bold text-sm transition-colors"
-                            >
-                                Edit
-                            </button>
-                            
-                            <button 
-                                onClick={() => deleteCourse(c.id)} 
-                                className="text-slate-400 hover:text-red-600 font-bold text-sm transition-colors"
-                            >
-                                Delete
-                            </button>
+                                <button onClick={() => setAssigningCourse(c)} className="text-emerald-600 hover:text-emerald-700 font-bold text-sm bg-emerald-50 px-3 py-1.5 rounded border border-emerald-100 hover:border-emerald-200 transition-colors">Assign 👥</button>
+                                <button onClick={() => { setCurrentCourseId(c.id); setView('course'); }} className="text-slate-500 hover:text-rose-600 font-bold text-sm transition-colors">Preview</button>
+                                <button onClick={() => { setCurrentCourseId(c.id); setView('courseBuilder'); }} className="text-rose-600 hover:text-rose-800 font-bold text-sm transition-colors">Edit</button>
+                                <button onClick={() => deleteCourse(c.id)} className="text-slate-400 hover:text-red-600 font-bold text-sm transition-colors">Delete</button>
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
 
-            {/* ASSIGNMENT MODAL */}
+            {/* COURSE STATS MODAL (New) */}
+            {viewingStats && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+                        <div className="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-900">{viewingStats.title}</h2>
+                                <p className="text-slate-500 text-sm">Course Progress Report</p>
+                            </div>
+                            <button onClick={() => setViewingStats(null)} className="text-slate-400 hover:text-slate-800 text-2xl">&times;</button>
+                        </div>
+                        
+                        <div className="p-6 overflow-y-auto">
+                            <table className="min-w-full divide-y divide-slate-100">
+                                <thead className="bg-slate-50">
+                                    <tr>
+                                        <th className="px-4 py-2 text-left text-xs font-bold text-slate-500 uppercase">Agent</th>
+                                        <th className="px-4 py-2 text-left text-xs font-bold text-slate-500 uppercase">Team</th>
+                                        <th className="px-4 py-2 text-left text-xs font-bold text-slate-500 uppercase">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {users.filter(u => u.assignedCourses?.includes(viewingStats.id)).map(user => {
+                                        const isComplete = isCourseComplete(user.uid, viewingStats);
+                                        return (
+                                            <tr key={user.uid} className="hover:bg-slate-50">
+                                                <td className="px-4 py-3 font-bold text-slate-700">{user.name}</td>
+                                                <td className="px-4 py-3">
+                                                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${user.team === 'service' ? 'bg-cyan-100 text-cyan-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                                        {user.team || 'Sales'}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    {isComplete ? (
+                                                        <span className="text-emerald-600 font-bold text-xs flex items-center gap-1">
+                                                            ✓ Complete
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-amber-600 font-bold text-xs flex items-center gap-1">
+                                                            ○ Pending
+                                                        </span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                    {users.filter(u => u.assignedCourses?.includes(viewingStats.id)).length === 0 && (
+                                        <tr><td colSpan="3" className="text-center py-4 text-slate-400 italic">No agents assigned to this course.</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div className="p-4 border-t border-slate-100 bg-slate-50 text-right">
+                            <button onClick={() => setViewingStats(null)} className="bg-slate-900 text-white px-6 py-2 rounded-lg shadow hover:bg-slate-800 font-bold transition-colors">Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ASSIGNMENT MODAL (Existing) */}
             {assigningCourse && (
                 <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
                     <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
@@ -235,24 +324,39 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
                                 <h2 className="text-xl font-bold text-slate-900">Assign Course</h2>
                                 <p className="text-slate-500 text-sm">Assigning: <span className="font-bold text-rose-600">{assigningCourse.title}</span></p>
                             </div>
-                            <button onClick={() => setAssigningCourse(null)} className="text-slate-400 hover:text-slate-800 text-2xl">&times;</button>
+                            <button onClick={() => { setAssigningCourse(null); setBulkTeamTargets([]); }} className="text-slate-400 hover:text-slate-800 text-2xl">&times;</button>
                         </div>
 
                         {/* BULK ACTIONS BAR */}
-                        <div className="bg-slate-100 p-3 flex justify-end gap-3 border-b border-slate-200">
-                            <span className="text-xs font-bold text-slate-500 uppercase self-center mr-2">Quick Assign:</span>
-                            <button 
-                                onClick={() => assignToTeam('sales')}
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded shadow transition-colors"
-                            >
-                                All Sales Team
-                            </button>
-                            <button 
-                                onClick={() => assignToTeam('service')}
-                                className="bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-bold px-3 py-1.5 rounded shadow transition-colors"
-                            >
-                                All Service Team
-                            </button>
+                        <div className="bg-slate-50 p-4 border-b border-slate-200">
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                                <span className="text-xs font-black text-slate-400 uppercase mr-2">Bulk Assign to Teams:</span>
+                                {availableTeams.map(team => (
+                                    <label key={team} className={`cursor-pointer px-3 py-1 rounded-full text-xs font-bold border transition-all select-none ${
+                                        bulkTeamTargets.includes(team) 
+                                        ? 'bg-rose-100 text-rose-800 border-rose-200 shadow-sm' 
+                                        : 'bg-white text-slate-500 border-slate-200 hover:border-rose-300'
+                                    }`}>
+                                        <input 
+                                            type="checkbox" 
+                                            className="hidden" 
+                                            checked={bulkTeamTargets.includes(team)}
+                                            onChange={() => toggleBulkTeam(team)}
+                                        />
+                                        {team.toUpperCase()}
+                                    </label>
+                                ))}
+                            </div>
+                            {bulkTeamTargets.length > 0 && (
+                                <div className="text-right">
+                                    <button 
+                                        onClick={handleBulkAssign}
+                                        className="bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded-lg shadow hover:bg-rose-700 transition-colors"
+                                    >
+                                        Assign to Selected Teams ({bulkTeamTargets.length})
+                                    </button>
+                                </div>
+                            )}
                         </div>
                         
                         <div className="p-6 overflow-y-auto">
@@ -275,15 +379,9 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
                                                     <div className="text-xs text-slate-500">{user.email}</div>
                                                 </td>
                                                 <td className="px-4 py-3">
-                                                    {/* UPDATED: Team is now editable */}
-                                                    <select
-                                                        className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border-none cursor-pointer focus:ring-0 ${user.team === 'service' ? 'bg-cyan-100 text-cyan-800' : 'bg-emerald-100 text-emerald-800'}`}
-                                                        value={user.team || 'sales'}
-                                                        onChange={(e) => updateUserTeam(user.uid, e.target.value)}
-                                                    >
-                                                        <option value="sales">SALES</option>
-                                                        <option value="service">SERVICE</option>
-                                                    </select>
+                                                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                                                        {user.team || 'Sales'}
+                                                    </span>
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     {isAssigned ? 
@@ -310,7 +408,7 @@ const CourseManager = ({ courses, folders = [], users, setView, setCurrentCourse
                         </div>
                         <div className="p-4 border-t border-slate-100 bg-slate-50 text-right">
                             <button 
-                                onClick={() => setAssigningCourse(null)} 
+                                onClick={() => { setAssigningCourse(null); setBulkTeamTargets([]); }} 
                                 className="bg-slate-900 text-white px-6 py-2 rounded-lg shadow hover:bg-slate-800 font-bold transition-colors"
                             >
                                 Done

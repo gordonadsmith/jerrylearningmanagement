@@ -119,7 +119,7 @@ const App = () => {
         let unsubResp;
         if (profile.role === 'admin') {
             unsubResp = onSnapshot(collection(db, getPublicPath('responses')), s => {
-                // FIXED: Include ID so we can delete responses later
+                // Keep ID for deletion logic
                 const data = s.docs.map(d => ({ id: d.id, ...d.data() }));
                 setAllResponses(data);
                 setMyResponses(data.filter(r => r.userId === profile.uid)); 
@@ -182,7 +182,8 @@ const App = () => {
                     <CourseManager 
                         courses={courses} 
                         folders={folders} 
-                        users={users} 
+                        users={users}
+                        responses={allResponses} // <--- NEW PROP ADDED HERE
                         setView={setView} 
                         setCurrentCourseId={setCurrentCourseId} 
                     />

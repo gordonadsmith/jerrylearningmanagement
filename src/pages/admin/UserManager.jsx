@@ -12,7 +12,7 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
     // Bulk Assignment State
     const [showBulkAssign, setShowBulkAssign] = useState(false);
     const [bulkCourseId, setBulkCourseId] = useState('');
-    const [bulkTeamTarget, setBulkTeamTarget] = useState('sales');
+    const [bulkTeamTargets, setBulkTeamTargets] = useState([]); // Changed to Array for multiple selections
 
     // --- DYNAMIC TEAMS LOGIC ---
     // 1. Start with default teams
@@ -107,14 +107,26 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
     };
 
     // --- BULK ASSIGNMENT LOGIC ---
+    const toggleBulkTeam = (team) => {
+        setBulkTeamTargets(prev => 
+            prev.includes(team) ? prev.filter(t => t !== team) : [...prev, team]
+        );
+    };
+
     const handleBulkAssign = async () => {
         if (!bulkCourseId) return alert("Please select a course.");
+        if (bulkTeamTargets.length === 0) return alert("Please select at least one team.");
         
         const targetCourse = courses.find(c => c.id === bulkCourseId);
-        if (!window.confirm(`Assign '${targetCourse.title}' to all ${bulkTeamTarget.toUpperCase()} team members?`)) return;
+        const teamNames = bulkTeamTargets.map(t => t.toUpperCase()).join(", ");
 
-        // Filter users who are in the target team and NOT disabled
-        const targetUsers = users.filter(u => (u.team === bulkTeamTarget) && !u.disabled);
+        if (!window.confirm(`Assign '${targetCourse.title}' to all members of: ${teamNames}?`)) return;
+
+        // Filter users who are in ANY of the target teams and NOT disabled
+        const targetUsers = users.filter(u => {
+            const userTeam = u.team || 'sales'; // Default to sales if undefined
+            return bulkTeamTargets.includes(userTeam) && !u.disabled;
+        });
         
         try {
             const promises = targetUsers.map(u => {
@@ -125,6 +137,7 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
             alert(`Successfully assigned to ${targetUsers.length} users.`);
             setShowBulkAssign(false);
             setBulkCourseId('');
+            setBulkTeamTargets([]);
         } catch (e) {
             alert("Error assigning to team: " + e.message);
         }
@@ -170,22 +183,27 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Select Team</label>
-                                <select 
-                                    className="w-full border border-slate-300 p-3 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-500"
-                                    value={bulkTeamTarget}
-                                    onChange={e => setBulkTeamTarget(e.target.value)}
-                                >
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Select Teams</label>
+                                <div className="border border-slate-300 rounded-lg bg-slate-50 p-3 max-h-48 overflow-y-auto space-y-2">
                                     {availableTeams.map(team => (
-                                        <option key={team} value={team}>{team.charAt(0).toUpperCase() + team.slice(1)} Team</option>
+                                        <label key={team} className="flex items-center gap-3 cursor-pointer hover:bg-slate-100 p-2 rounded transition-colors">
+                                            <input 
+                                                type="checkbox"
+                                                className="form-checkbox h-5 w-5 text-rose-600 rounded border-slate-300 focus:ring-rose-500"
+                                                checked={bulkTeamTargets.includes(team)}
+                                                onChange={() => toggleBulkTeam(team)}
+                                            />
+                                            <span className="text-sm text-slate-700 font-bold">{team.charAt(0).toUpperCase() + team.slice(1)} Team</span>
+                                        </label>
                                     ))}
-                                </select>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1 italic">Select one or more teams to assign this course to.</p>
                             </div>
                         </div>
 
                         <div className="flex justify-end gap-3 mt-6">
                             <button onClick={() => setShowBulkAssign(false)} className="px-4 py-2 text-slate-500 font-bold hover:text-slate-800">Cancel</button>
-                            <button onClick={handleBulkAssign} className="bg-rose-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-rose-700 shadow-lg">Assign to Team</button>
+                            <button onClick={handleBulkAssign} className="bg-rose-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-rose-700 shadow-lg transition-colors">Assign to Selected</button>
                         </div>
                     </div>
                 </div>
