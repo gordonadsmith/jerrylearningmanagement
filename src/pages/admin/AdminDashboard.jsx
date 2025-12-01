@@ -1,12 +1,18 @@
 import React, { useState } from 'react';
 
-const AdminDashboard = ({ users, courses, responses, onSelectUser }) => {
+const AdminDashboard = ({ users, courses, responses, teams = [], onSelectUser }) => {
     const [selectedTeam, setSelectedTeam] = useState('all');
 
     // Get unique teams from the user list
     const availableTeams = Array.from(new Set([
         ...users.map(u => u.team).filter(t => t)
     ])).sort();
+
+    // Helper to get color class for a team
+    const getTeamStyle = (teamName) => {
+        const config = teams.find(t => t.id === teamName);
+        return config?.color || 'bg-slate-100 text-slate-600';
+    };
 
     // Filter users based on selection
     const filteredUsers = users.filter(u => 
@@ -53,8 +59,9 @@ const AdminDashboard = ({ users, courses, responses, onSelectUser }) => {
                             <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center group-hover:bg-rose-50 transition-colors">
                                 <div>
                                     <h3 className="font-bold text-lg text-slate-900 group-hover:text-rose-700 transition-colors">{user.name}</h3>
-                                    <div className="flex items-center gap-2">
-                                        <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${user.team === 'service' ? 'bg-cyan-100 text-cyan-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        {/* UPDATED: Uses dynamic team style now */}
+                                        <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${getTeamStyle(user.team || 'sales')}`}>
                                             {user.team || 'Sales'}
                                         </span>
                                         <p className="text-xs text-slate-500">{user.email}</p>

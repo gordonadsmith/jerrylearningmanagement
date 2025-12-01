@@ -3,7 +3,8 @@ import { setDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getPublicPath } from '../../utils';
 
-const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
+const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser }) => {
+    // --- STATE ---
     const [newUserEmail, setNewUserEmail] = useState('');
     const [newUserName, setNewUserName] = useState('');
     const [newUserTeam, setNewUserTeam] = useState('sales'); 
@@ -12,16 +13,59 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
     // Bulk Assignment State
     const [showBulkAssign, setShowBulkAssign] = useState(false);
     const [bulkCourseId, setBulkCourseId] = useState('');
-    const [bulkTeamTargets, setBulkTeamTargets] = useState([]); // Changed to Array for multiple selections
+    const [bulkTeamTargets, setBulkTeamTargets] = useState([]); // Array for multi-select
 
-    // --- DYNAMIC TEAMS LOGIC ---
-    // 1. Start with default teams
-    // 2. Add any unique team names found in the existing user list
+    // Team Management State
+    const [showTeamManager, setShowTeamManager] = useState(false);
+
+    // --- DERIVED DATA ---
+    // Get all unique teams currently assigned to users + defaults
     const availableTeams = Array.from(new Set([
         'sales', 
         'service', 
-        ...users.map(u => u.team).filter(t => t) // Get existing teams from users
+        ...users.map(u => u.team).filter(t => t)
     ])).sort();
+
+    // Color Options for Teams
+    const colorOptions = [
+        { name: 'Navy', value: 'bg-slate-100 text-slate-800' },
+        { name: 'Red', value: 'bg-red-100 text-red-800' },
+        { name: 'Orange', value: 'bg-orange-100 text-orange-800' },
+        { name: 'Amber', value: 'bg-amber-100 text-amber-800' },
+        { name: 'Green', value: 'bg-emerald-100 text-emerald-800' },
+        { name: 'Teal', value: 'bg-teal-100 text-teal-800' },
+        { name: 'Blue', value: 'bg-blue-100 text-blue-800' },
+        { name: 'Indigo', value: 'bg-indigo-100 text-indigo-800' },
+        { name: 'Purple', value: 'bg-purple-100 text-purple-800' },
+        { name: 'Pink', value: 'bg-pink-100 text-pink-800' },
+        { name: 'Rose', value: 'bg-rose-100 text-rose-800' },
+    ];
+
+    // --- HELPERS ---
+    const getTeamStyle = (teamName) => {
+        const config = teams.find(t => t.id === teamName);
+        return config?.color || 'bg-slate-100 text-slate-600';
+    };
+
+    const isCourseComplete = (userId, course) => {
+        if (!course.modules || course.modules.length === 0) return false;
+        const lastModId = course.modules[course.modules.length - 1].id;
+        return responses.some(r => r.userId === userId && r.courseId === course.id && r.moduleId === lastModId);
+    };
+
+    // --- ACTIONS ---
+
+    const handleUpdateTeamColor = async (teamName, colorClass) => {
+        try {
+            await setDoc(doc(db, getPublicPath('teams'), teamName), {
+                id: teamName,
+                name: teamName,
+                color: colorClass
+            }, { merge: true });
+        } catch (e) {
+            alert("Error updating team color: " + e.message);
+        }
+    };
 
     const handleAddUser = async (e) => {
         e.preventDefault();
@@ -66,21 +110,14 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
 
     const handleTeamChange = async (userId, value) => {
         let teamToSet = value;
-        
         if (value === 'CREATE_NEW') {
             const customName = prompt("Enter the name of the new team:");
             if (customName && customName.trim().length > 0) {
                 teamToSet = customName.trim().toLowerCase();
-            } else {
-                return; // Cancelled
-            }
+            } else { return; }
         }
-
-        try {
-            await updateDoc(doc(db, getPublicPath('users'), userId), { team: teamToSet });
-        } catch (e) {
-            alert("Error updating team: " + e.message);
-        }
+        try { await updateDoc(doc(db, getPublicPath('users'), userId), { team: teamToSet }); } 
+        catch (e) { alert("Error updating team: " + e.message); }
     };
 
     const handleNewUserTeamChange = (value) => {
@@ -89,21 +126,13 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
             if (customName && customName.trim().length > 0) {
                 setNewUserTeam(customName.trim().toLowerCase());
             }
-        } else {
-            setNewUserTeam(value);
-        }
+        } else { setNewUserTeam(value); }
     };
 
     const removeCourse = async (userId, courseId, currentList = []) => {
         if(!window.confirm("Remove this course assignment?")) return;
         const newList = currentList.filter(id => id !== courseId);
         await updateDoc(doc(db, getPublicPath('users'), userId), { assignedCourses: newList });
-    };
-
-    const isCourseComplete = (userId, course) => {
-        if (!course.modules || course.modules.length === 0) return false;
-        const lastModId = course.modules[course.modules.length - 1].id;
-        return responses.some(r => r.userId === userId && r.courseId === course.id && r.moduleId === lastModId);
     };
 
     // --- BULK ASSIGNMENT LOGIC ---
@@ -149,6 +178,12 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                 <h1 className="text-3xl font-extrabold text-slate-900">Manage Users</h1>
                 <div className="flex gap-3">
                     <button 
+                        onClick={() => setShowTeamManager(true)} 
+                        className="bg-white text-slate-600 border border-slate-300 px-4 py-2 rounded-lg shadow-sm hover:bg-slate-50 font-bold transition-all"
+                    >
+                        Manage Teams
+                    </button>
+                    <button 
                         onClick={() => setShowBulkAssign(true)} 
                         className="bg-white text-rose-600 border border-rose-200 px-4 py-2 rounded-lg shadow-sm hover:bg-rose-50 font-bold transition-all"
                     >
@@ -163,6 +198,45 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                 </div>
             </div>
             
+            {/* TEAM MANAGER MODAL */}
+            {showTeamManager && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-lg border border-slate-100">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-xl font-bold text-slate-900">Manage Team Colors</h2>
+                            <button onClick={() => setShowTeamManager(false)} className="text-slate-400 hover:text-slate-800 text-xl">&times;</button>
+                        </div>
+                        
+                        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                            {availableTeams.map(team => {
+                                const currentStyle = getTeamStyle(team);
+                                return (
+                                    <div key={team} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                        <div className="flex items-center gap-3">
+                                            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${currentStyle}`}>
+                                                {team}
+                                            </span>
+                                        </div>
+                                        <select 
+                                            className="text-xs border border-slate-300 rounded p-1 text-slate-600 focus:outline-none"
+                                            value={currentStyle}
+                                            onChange={(e) => handleUpdateTeamColor(team, e.target.value)}
+                                        >
+                                            {colorOptions.map(opt => (
+                                                <option key={opt.value} value={opt.value}>{opt.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div className="mt-6 text-right">
+                            <button onClick={() => setShowTeamManager(false)} className="bg-slate-900 text-white px-6 py-2 rounded-lg font-bold">Done</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* BULK ASSIGN MODAL */}
             {showBulkAssign && (
                 <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -193,7 +267,7 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                                                 checked={bulkTeamTargets.includes(team)}
                                                 onChange={() => toggleBulkTeam(team)}
                                             />
-                                            <span className="text-sm text-slate-700 font-bold">{team.charAt(0).toUpperCase() + team.slice(1)} Team</span>
+                                            <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${getTeamStyle(team)}`}>{team}</span>
                                         </label>
                                     ))}
                                 </div>
@@ -214,19 +288,16 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                 <form onSubmit={handleAddUser} className="bg-white p-6 rounded-xl mb-6 border border-slate-200 shadow-sm flex gap-4 items-center">
                     <input className="border border-slate-300 p-3 rounded-lg flex-1 focus:ring-2 focus:ring-rose-500 focus:outline-none" placeholder="Email" type="email" value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} required />
                     <input className="border border-slate-300 p-3 rounded-lg flex-1 focus:ring-2 focus:ring-rose-500 focus:outline-none" placeholder="Full Name" value={newUserName} onChange={e => setNewUserName(e.target.value)} required />
-                    
-                    {/* DYNAMIC TEAM SELECTOR */}
                     <select 
-                        className="border border-slate-300 p-3 rounded-lg w-40 focus:ring-2 focus:ring-rose-500 focus:outline-none bg-slate-50"
+                        className="border border-slate-300 p-3 rounded-lg w-40 focus:ring-2 focus:ring-rose-500 focus:outline-none bg-slate-50 uppercase text-xs font-bold"
                         value={newUserTeam}
                         onChange={e => handleNewUserTeamChange(e.target.value)}
                     >
                         {availableTeams.map(team => (
-                            <option key={team} value={team}>{team.charAt(0).toUpperCase() + team.slice(1)}</option>
+                            <option key={team} value={team}>{team.toUpperCase()}</option>
                         ))}
-                        <option value="CREATE_NEW" className="font-bold text-rose-600">+ Add New Team</option>
+                        <option value="CREATE_NEW">+ Add New Team</option>
                     </select>
-
                     <button type="submit" className="bg-rose-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-rose-700">Save</button>
                 </form>
             )}
@@ -247,7 +318,6 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                     <tbody className="divide-y divide-slate-100">
                         {users.map(user => (
                             <tr key={user.uid} className={`hover:bg-slate-50 transition-colors ${user.disabled ? 'opacity-60 bg-slate-50' : ''}`}>
-                                {/* NAME & EMAIL */}
                                 <td className="px-6 py-4">
                                     <div 
                                         onClick={() => onSelectUser(user)} 
@@ -259,12 +329,10 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                                     {user.isInvite && <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full mt-1 inline-block">Pending Signup</span>}
                                 </td>
                                 
-                                {/* DYNAMIC TEAM DROPDOWN */}
+                                {/* TEAM DROPDOWN (With Colors) */}
                                 <td className="px-6 py-4">
                                     <select 
-                                        className={`text-xs font-bold uppercase border-none rounded px-2 py-1 cursor-pointer focus:ring-0 ${
-                                            user.team === 'service' ? 'bg-cyan-100 text-cyan-800' : 'bg-emerald-100 text-emerald-800'
-                                        }`}
+                                        className={`text-[10px] font-black uppercase px-2 py-1 rounded border-none cursor-pointer focus:ring-0 ${getTeamStyle(user.team || 'sales')}`}
                                         value={user.team || 'sales'}
                                         onChange={(e) => handleTeamChange(user.uid, e.target.value)}
                                         disabled={user.disabled}
@@ -276,7 +344,6 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                                     </select>
                                 </td>
 
-                                {/* ROLE TOGGLE */}
                                 <td className="px-6 py-4">
                                     <button 
                                         onClick={() => toggleAdminRole(user)}
@@ -291,14 +358,12 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                                     </button>
                                 </td>
 
-                                {/* STATUS */}
                                 <td className="px-6 py-4">
                                     <span className={`px-2 py-1 text-xs rounded-full font-bold ${user.disabled ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'}`}>
                                         {user.disabled ? 'Disabled' : 'Active'}
                                     </span>
                                 </td>
 
-                                {/* ASSIGNED COURSES */}
                                 <td className="px-6 py-4">
                                     <div className="flex flex-wrap gap-2">
                                         {courses.map(c => {
@@ -329,7 +394,6 @@ const UserManager = ({ users, courses, responses = [], onSelectUser }) => {
                                     </div>
                                 </td>
 
-                                {/* ACTIONS (Disable User) */}
                                 <td className="px-6 py-4">
                                     <button onClick={() => toggleUserStatus(user)} className={`text-sm font-bold ${user.disabled ? 'text-emerald-600 hover:text-emerald-800' : 'text-slate-400 hover:text-red-600'}`}>
                                         {user.disabled ? 'Activate' : 'Disable'}

@@ -28,6 +28,7 @@ const App = () => {
     // Data Lists
     const [courses, setCourses] = useState([]);
     const [folders, setFolders] = useState([]); 
+    const [teams, setTeams] = useState([]); // Teams State
     const [users, setUsers] = useState([]);
     const [allResponses, setAllResponses] = useState([]);
     const [myResponses, setMyResponses] = useState([]);
@@ -115,7 +116,10 @@ const App = () => {
         // 2. Fetch Folders
         const unsubF = onSnapshot(collection(db, getPublicPath('folders')), s => setFolders(s.docs.map(d => ({id: d.id, ...d.data()}))));
 
-        // 3. Fetch Progress (Responses)
+        // 3. Fetch Teams
+        const unsubT = onSnapshot(collection(db, getPublicPath('teams')), s => setTeams(s.docs.map(d => ({id: d.id, ...d.data()}))));
+
+        // 4. Fetch Progress (Responses)
         let unsubResp;
         if (profile.role === 'admin') {
             unsubResp = onSnapshot(collection(db, getPublicPath('responses')), s => {
@@ -129,13 +133,13 @@ const App = () => {
             unsubResp = onSnapshot(q, s => setMyResponses(s.docs.map(d => ({ id: d.id, ...d.data() }))));
         }
 
-        // 4. Fetch Users (Admin Only)
+        // 5. Fetch Users (Admin Only)
         let unsubU = () => {};
         if (profile.role === 'admin') {
             unsubU = onSnapshot(collection(db, getPublicPath('users')), s => setUsers(s.docs.map(d => ({uid: d.id, ...d.data()}))));
         }
 
-        return () => { unsubC(); unsubF(); unsubU(); unsubResp && unsubResp(); };
+        return () => { unsubC(); unsubF(); unsubT(); unsubU(); unsubResp && unsubResp(); };
     }, [profile]);
 
     // --- VIEW ROUTING ---
@@ -156,6 +160,7 @@ const App = () => {
                         users={users} 
                         courses={courses} 
                         responses={allResponses} 
+                        teams={teams}
                         onSelectUser={handleOpenProfile} 
                     />
                 )}
@@ -165,6 +170,7 @@ const App = () => {
                         users={users} 
                         courses={courses} 
                         responses={allResponses}
+                        teams={teams}
                         onSelectUser={handleOpenProfile} 
                     />
                 )}
@@ -183,7 +189,8 @@ const App = () => {
                         courses={courses} 
                         folders={folders} 
                         users={users}
-                        responses={allResponses} // <--- NEW PROP ADDED HERE
+                        responses={allResponses}
+                        teams={teams} 
                         setView={setView} 
                         setCurrentCourseId={setCurrentCourseId} 
                     />
