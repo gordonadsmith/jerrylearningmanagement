@@ -14,10 +14,20 @@ const AdminDashboard = ({ users, courses, responses, teams = [], onSelectUser })
         return config?.color || 'bg-slate-100 text-slate-600';
     };
 
-    // Filter users based on selection
+    // Filter users based on selection + Sort (Team Grouping -> Alphabetical Name)
     const filteredUsers = users.filter(u => 
         !u.disabled && (selectedTeam === 'all' || u.team === selectedTeam)
-    );
+    ).sort((a, b) => {
+        const teamA = (a.team || 'uncategorized').toLowerCase();
+        const teamB = (b.team || 'uncategorized').toLowerCase();
+        
+        // Primary Sort: Team
+        if (teamA < teamB) return -1;
+        if (teamA > teamB) return 1;
+        
+        // Secondary Sort: Name
+        return (a.name || '').localeCompare(b.name || '');
+    });
 
     return (
         <div className="p-8 bg-slate-50 min-h-full">
@@ -60,9 +70,9 @@ const AdminDashboard = ({ users, courses, responses, teams = [], onSelectUser })
                                 <div>
                                     <h3 className="font-bold text-lg text-slate-900 group-hover:text-rose-700 transition-colors">{user.name}</h3>
                                     <div className="flex items-center gap-2 mt-1">
-                                        {/* UPDATED: Uses dynamic team style now */}
-                                        <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${getTeamStyle(user.team || 'sales')}`}>
-                                            {user.team || 'Sales'}
+                                        {/* Uses dynamic team style */}
+                                        <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded ${getTeamStyle(user.team || 'uncategorized')}`}>
+                                            {user.team || 'Uncategorized'}
                                         </span>
                                         <p className="text-xs text-slate-500">{user.email}</p>
                                     </div>

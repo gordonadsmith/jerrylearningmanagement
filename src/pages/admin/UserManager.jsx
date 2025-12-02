@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { setDoc, doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { setDoc, doc, updateDoc, arrayUnion, deleteDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { getPublicPath } from '../../utils';
 
@@ -26,6 +26,19 @@ const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser 
         'service', 
         ...users.map(u => u.team).filter(t => t)
     ])).sort();
+
+    // SORTED USERS: Group by Team, then Alphabetical by Name
+    const sortedUsers = [...users].sort((a, b) => {
+        const teamA = (a.team || 'uncategorized').toLowerCase();
+        const teamB = (b.team || 'uncategorized').toLowerCase();
+        
+        // Primary Sort: Team
+        if (teamA < teamB) return -1;
+        if (teamA > teamB) return 1;
+        
+        // Secondary Sort: Name
+        return (a.name || '').localeCompare(b.name || '');
+    });
 
     // Color Options for Teams
     const colorOptions = [
@@ -96,6 +109,15 @@ const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser 
         } catch (e) { alert(e.message); }
     };
 
+    const deleteUser = async (userId) => {
+        if (!window.confirm("Are you sure you want to permanently delete this user? This action cannot be undone.")) return;
+        try {
+            await deleteDoc(doc(db, getPublicPath('users'), userId));
+        } catch (e) {
+            alert("Error deleting user: " + e.message);
+        }
+    };
+
     const toggleAdminRole = async (user) => {
         const newRole = user.role === 'admin' ? 'employee' : 'admin';
         const action = newRole === 'admin' ? 'Promote to Admin' : 'Remove Admin access';
@@ -154,7 +176,7 @@ const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser 
 
         // Filter users who are in ANY of the target teams and NOT disabled
         const targetUsers = users.filter(u => {
-            const userTeam = u.team || 'uncategorized'; 
+            const userTeam = u.team || 'uncategorized'; // Default to sales if undefined
             return bulkTeamTargets.includes(userTeam) && !u.disabled;
         });
         
@@ -317,7 +339,7 @@ const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser 
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                        {users.map(user => (
+                        {sortedUsers.map(user => (
                             <tr key={user.uid} className={`hover:bg-slate-50 transition-colors ${user.disabled ? 'opacity-60 bg-slate-50' : ''}`}>
                                 <td className="px-6 py-4">
                                     <div 
@@ -395,10 +417,21 @@ const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser 
                                     </div>
                                 </td>
 
-                                <td className="px-6 py-4">
+                                <td className="px-6 py-4 flex gap-2">
                                     <button onClick={() => toggleUserStatus(user)} className={`text-sm font-bold ${user.disabled ? 'text-emerald-600 hover:text-emerald-800' : 'text-slate-400 hover:text-red-600'}`}>
                                         {user.disabled ? 'Activate' : 'Disable'}
                                     </button>
+                                    
+                                    {/* Delete Button (Only if disabled) */}
+                                    {user.disabled && (
+                                        <button 
+                                            onClick={() => deleteUser(user.uid)} 
+                                            className="text-sm font-bold text-red-600 hover:text-red-800 border-l pl-2 border-slate-300"
+                                            title="Permanently Delete User"
+                                        >
+                                            Delete
+                                        </button>
+                                    )}
                                 </td>
                             </tr>
                         ))}
