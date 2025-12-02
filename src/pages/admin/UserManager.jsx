@@ -21,6 +21,7 @@ const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser 
     // --- DERIVED DATA ---
     // Get all unique teams currently assigned to users + defaults
     const availableTeams = Array.from(new Set([
+        'uncategorized',
         'sales', 
         'service', 
         ...users.map(u => u.team).filter(t => t)
@@ -153,7 +154,7 @@ const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser 
 
         // Filter users who are in ANY of the target teams and NOT disabled
         const targetUsers = users.filter(u => {
-            const userTeam = u.team || 'sales'; // Default to sales if undefined
+            const userTeam = u.team || 'uncategorized'; 
             return bulkTeamTargets.includes(userTeam) && !u.disabled;
         });
         
@@ -332,8 +333,8 @@ const UserManager = ({ users, courses, responses = [], teams = [], onSelectUser 
                                 {/* TEAM DROPDOWN (With Colors) */}
                                 <td className="px-6 py-4">
                                     <select 
-                                        className={`text-[10px] font-black uppercase px-2 py-1 rounded border-none cursor-pointer focus:ring-0 ${getTeamStyle(user.team || 'sales')}`}
-                                        value={user.team || 'sales'}
+                                        className={`text-[10px] font-black uppercase px-2 py-1 rounded border-none cursor-pointer focus:ring-0 ${getTeamStyle(user.team || 'uncategorized')}`}
+                                        value={user.team || 'uncategorized'}
                                         onChange={(e) => handleTeamChange(user.uid, e.target.value)}
                                         disabled={user.disabled}
                                     >
